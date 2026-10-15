@@ -6,8 +6,15 @@ menu "Vigilant Engine Configuration: LEDs"
             Enable this option to use the status LED functionality in Vigilant Engine.
             The status LED provides visual feedback on the system's status and operations, and can optionally be used for visual output.
 
+    config VE_INVERT_WS2812B_SIGNAL
+        bool "Invert Status LED"
+        default y
+        help
+            Enable this option to invert the signal (active low) for the WS2812B status LED. This may be necessary depending on the specific hardware configuration and wiring of the LED.
+
     config VE_STATUS_WS2812B_PIN
         int "WS2812B Data Pin"
+        depends on VE_ENABLE_STATUS_LED
         default 1
 
     config VE_LOG_INFO_PULSE_MS

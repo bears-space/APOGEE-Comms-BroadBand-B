@@ -25,11 +25,6 @@ The network mode of the esp node.
 ___
 ## Menuconfig Settings (Status LED)
 ___
-#### `VE_INVERT_STATUS_LED`, **bool**
-Depending on the board and LED, some activate on LOW and some activate on HIGH. To invert and turn the LED on for LOW, set this option to true.
-
-**default**: `0`
-___
 #### `VE_ENABLE_STATUS_LED`, **bool**
 Enable status LED, enable this option to use the status LED functionality in Vigilant Engine. The status LED provides visual feedback on the system's status and operations, and can optionally be used for visual output.
 
@@ -41,6 +36,12 @@ The GPIO pin used as the data output for the WS2812B status LED. This setting ap
 
 **default**: `1`
 
+---
+
+#### `VE_INVERT_WS2812B_SIGNAL`, **bool**
+Depending on the board and LED, some activate on LOW and some activate on HIGH. To invert and turn the LED on for LOW, set this option to true.
+
+**default**: `0`
 ___
 
 #### `VE_LOG_INFO_PULSE_MS`, **int**

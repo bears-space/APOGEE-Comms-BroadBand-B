@@ -25,6 +25,12 @@
 #define ENABLE_LED 0
 #endif
 
+#if defined(CONFIG_VE_INVERT_WS2812B_SIGNAL)
+#define INVERT_WS2812B_SIGNAL 1
+#else
+#define INVERT_WS2812B_SIGNAL 0
+#endif
+
 #if ENABLE_LED
 static const char* TAG = "status_led";
 
@@ -296,34 +302,38 @@ esp_err_t init_led() {
     if (s_strip)
         return status_led_enable_log_feedback();  // already initialized
 
-    led_strip_config_t strip_cfg = {
-        .strip_gpio_num = CONFIG_VE_STATUS_WS2812B_PIN,
-        .max_leds = 1,
-        .led_model = LED_MODEL_WS2812,
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB};
-
-    led_strip_rmt_config_t rmt_cfg = {.clk_src = RMT_CLK_SRC_DEFAULT,
-                                      .resolution_hz = (10 * 1000 * 1000),
-                                      .mem_block_symbols = 64,
-                                      .flags = {
-                                          .with_dma = false,
-                                      }};
-
-    esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "led_strip_new_rmt_device failed: %s",
-                 esp_err_to_name(err));
-        s_strip = NULL;
-        return err;
+    led_strip_config_t strip_cfg = {.strip_gpio_num =
+                                        CONFIG_VE_STATUS_WS2812B_PIN,
+                                    .max_leds = 1,
+                                    .led_model = LED_MODEL_WS2812,
+                                    .color_component_format =
+                                        LED_STRIP_COLOR_COMPONENT_FMT_GRB}
+                                       .flags = {
+        .invert_out = INVERT_WS2812B_SIGNAL,
     }
+};
 
-    esp_err_t off_err = ws2812b_status_led_off();
-    if (off_err == ESP_OK) {
-        ESP_LOGI(TAG, "Done initializing status LED");
-        return status_led_enable_log_feedback();
-    }
-    return off_err;
+led_strip_rmt_config_t rmt_cfg = {.clk_src = RMT_CLK_SRC_DEFAULT,
+                                  .resolution_hz = (10 * 1000 * 1000),
+                                  .mem_block_symbols = 64,
+                                  .flags = {
+                                      .with_dma = false,
+                                  }};
+
+esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
+if (err != ESP_OK) {
+    ESP_LOGE(TAG, "led_strip_new_rmt_device failed: %s", esp_err_to_name(err));
+    s_strip = NULL;
+    return err;
+}
+
+esp_err_t off_err = ws2812b_status_led_off();
+if (off_err == ESP_OK) {
     ESP_LOGI(TAG, "Done initializing status LED");
+    return status_led_enable_log_feedback();
+}
+return off_err;
+ESP_LOGI(TAG, "Done initializing status LED");
 }
 
 static esp_err_t blink_apply_state(void) {
