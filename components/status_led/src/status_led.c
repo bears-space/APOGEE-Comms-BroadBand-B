@@ -264,10 +264,16 @@ static void status_led_log_feedback_task(void* arg) {
             continue;
         }
 
-        if (event == ESP_LOG_WARN) {
-            status_led_pulse(255, 255, 0, CONFIG_VE_LOG_WARN_PULSE_MS);
+if (event == ESP_LOG_WARN) {
+            status_led_pulse(CONFIG_VE_LED_COLOR_WARNING >> 16 & 0xFF,
+                             CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
+                             CONFIG_VE_LED_COLOR_WARNING & 0xFF,
+                             CONFIG_VE_LOG_WARN_PULSE_MS);
         } else if (event == ESP_LOG_INFO) {
-            status_led_pulse(0, 255, 0, CONFIG_VE_LOG_INFO_PULSE_MS);
+            status_led_pulse(CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
+                             CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
+                             CONFIG_VE_LED_COLOR_INFO & 0xFF,
+                             CONFIG_VE_LOG_INFO_PULSE_MS);
         }
     }
 }
