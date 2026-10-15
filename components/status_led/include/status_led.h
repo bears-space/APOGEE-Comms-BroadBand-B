@@ -20,9 +20,6 @@ esp_err_t status_led_enable_log_feedback(void);
 // Use ESP_LOG_NONE to turn the LED off.
 esp_err_t status_led_set_state(esp_log_level_t state);
 
-esp_err_t static status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
-                                        uint8_t red, uint8_t green,
-                                        uint8_t blue);
 esp_err_t status_led_blink_stop(void);
 
 #ifdef __cplusplus

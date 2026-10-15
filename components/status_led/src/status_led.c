@@ -1,6 +1,7 @@
 #include "status_led.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -47,7 +48,6 @@ static struct {
     uint32_t on_ms, off_ms;
     uint8_t state;
     uint8_t gpio;
-    bool running;
     blink_output_t output;
     uint8_t red;
     uint8_t green;
@@ -56,28 +56,62 @@ static struct {
 
 static TaskHandle_t s_blink_task = NULL;
 static SemaphoreHandle_t s_led_mutex = NULL;
+// Callers hold this across the entire stop/configure/start transition. The
+// worker never takes it, so it can acknowledge a stop while the caller waits.
+static SemaphoreHandle_t s_blink_mutex = NULL;
+static SemaphoreHandle_t s_blink_stopped = NULL;
+static portMUX_TYPE s_mutex_init_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static TaskHandle_t s_log_feedback_task = NULL;
 static QueueHandle_t s_log_feedback_queue = NULL;
 static vprintf_like_t s_orig_vprintf = NULL;
 static bool s_log_hook_installed = false;
 static bool s_log_error_blink_started = false;
-static volatile bool s_log_error_latched =
+static atomic_bool s_log_error_latched =
     false;  // flag for whether an error has been logged and the LED should stay
             // in error state
 
 static esp_err_t status_led_ensure_mutex(void) {
-    if (s_led_mutex) {
+    portENTER_CRITICAL(&s_mutex_init_lock);
+    bool initialized = s_led_mutex != NULL;
+    portEXIT_CRITICAL(&s_mutex_init_lock);
+    if (initialized) {
         return ESP_OK;
     }
 
-    s_led_mutex = xSemaphoreCreateMutex();
-    if (!s_led_mutex) {
+    SemaphoreHandle_t led = xSemaphoreCreateMutex();
+    SemaphoreHandle_t blink = xSemaphoreCreateMutex();
+    SemaphoreHandle_t stopped = xSemaphoreCreateBinary();
+    if (!led || !blink || !stopped) {
+        if (led) vSemaphoreDelete(led);
+        if (blink) vSemaphoreDelete(blink);
+        if (stopped) vSemaphoreDelete(stopped);
         return ESP_ERR_NO_MEM;
     }
 
+    portENTER_CRITICAL(&s_mutex_init_lock);
+    if (!s_led_mutex) {
+        s_led_mutex = led;
+        s_blink_mutex = blink;
+        s_blink_stopped = stopped;
+        led = blink = stopped = NULL;
+    }
+    portEXIT_CRITICAL(&s_mutex_init_lock);
+    if (led) vSemaphoreDelete(led);
+    if (blink) vSemaphoreDelete(blink);
+    if (stopped) vSemaphoreDelete(stopped);
     return ESP_OK;
 }
+
+static esp_err_t status_led_blink_lock(void) {
+    esp_err_t err = status_led_ensure_mutex();
+    if (err == ESP_OK) {
+        xSemaphoreTake(s_blink_mutex, portMAX_DELAY);
+    }
+    return err;
+}
+
+static esp_err_t status_led_blink_stop_locked(void);
 
 static esp_err_t status_led_lock(void) {
     esp_err_t err = status_led_ensure_mutex();
@@ -219,33 +253,26 @@ static int status_led_log_vprintf(const char* fmt, va_list ap) {
     return vprintf(fmt, ap);
 }
 
-static void status_led_start_log_error_blink(void);
-
 static void status_led_pulse(uint8_t red, uint8_t green, uint8_t blue,
                              uint32_t duration_ms) {
-    esp_err_t err = status_led_blink_stop();
+    esp_err_t err = status_led_blink_lock();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to stop status LED blink: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to lock status LED: %s", esp_err_to_name(err));
         return;
     }
 
-    err = status_led_set_rgb_once(red, green, blue);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set status LED color: %s",
-                 esp_err_to_name(err));
-        return;
+    err = status_led_blink_stop_locked();
+    if (err == ESP_OK) {
+        err = status_led_set_rgb_once(red, green, blue);
     }
-    vTaskDelay(pdMS_TO_TICKS(duration_ms));
-
-    if (s_log_error_latched) {
-        status_led_start_log_error_blink();
-        return;
+    if (err == ESP_OK) {
+        // Keep other state changes from starting a blink during this pulse.
+        vTaskDelay(pdMS_TO_TICKS(duration_ms));
+        err = status_led_off_once();
     }
-
-    err = status_led_off_once();
+    xSemaphoreGive(s_blink_mutex);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to clear status LED: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to pulse status LED: %s", esp_err_to_name(err));
     }
 }
 
@@ -395,11 +422,9 @@ static esp_err_t blink_apply_off(void) {
 static void blink_task(void* arg) {
     (void)arg;
 
-    while (s_blink.running) {
+    while (true) {
         uint32_t delay_ms = s_blink.state ? s_blink.on_ms : s_blink.off_ms;
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(delay_ms));
-
-        if (!s_blink.running) {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(delay_ms)) != 0) {
             break;
         }
 
@@ -408,36 +433,22 @@ static void blink_task(void* arg) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to update blink state: %s",
                      esp_err_to_name(err));
-            s_blink.running = false;
+            // Keep the handle valid until the lifecycle owner requests stop.
+            (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             break;
         }
     }
 
-    s_blink_task = NULL;
+    // No shared blink state is touched after acknowledging completion. Only
+    // the lifecycle owner clears the handle or publishes a replacement task.
+    xSemaphoreGive(s_blink_stopped);
     vTaskDelete(NULL);
 }
 
-static esp_err_t status_led_wait_for_blink_task_stop(TaskHandle_t task) {
-    if (!task || task == xTaskGetCurrentTaskHandle()) {
-        return ESP_OK;
-    }
-
-    xTaskNotifyGive(task);
-
-    for (int i = 0; i < 100; ++i) {
-        if (s_blink_task != task) {
-            return ESP_OK;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    return ESP_ERR_TIMEOUT;
-}
-
-static esp_err_t status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
-                                        uint8_t red, uint8_t green,
-                                        uint8_t blue) {
-    esp_err_t err = status_led_blink_stop();
+static esp_err_t status_led_blink_start_locked(uint32_t on_ms, uint32_t off_ms,
+                                               uint8_t red, uint8_t green,
+                                               uint8_t blue) {
+    esp_err_t err = status_led_blink_stop_locked();
     if (err != ESP_OK) {
         return err;
     }
@@ -446,14 +457,12 @@ static esp_err_t status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
     s_blink.on_ms = on_ms;
     s_blink.off_ms = off_ms;
     s_blink.state = 1;
-    s_blink.running = true;
     s_blink.red = red;
     s_blink.green = green;
     s_blink.blue = blue;
 
     err = blink_apply_state();
     if (err != ESP_OK) {
-        s_blink.running = false;
         s_blink.output = BLINK_OUTPUT_NONE;
         return err;
     }
@@ -462,7 +471,6 @@ static esp_err_t status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
                                 &s_blink_task);
     if (ok != pdPASS) {
         blink_apply_off();
-        s_blink.running = false;
         s_blink.output = BLINK_OUTPUT_NONE;
         return ESP_ERR_NO_MEM;
     }
@@ -470,14 +478,13 @@ static esp_err_t status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
     return ESP_OK;
 }
 
-esp_err_t status_led_blink_stop(void) {
-    // Terminate task and set the active LED output to off
-    s_blink.running = false;
-
-    TaskHandle_t blink_task = s_blink_task;
-    esp_err_t stop_err = status_led_wait_for_blink_task_stop(blink_task);
-    if (stop_err != ESP_OK) {
-        return stop_err;
+static esp_err_t status_led_blink_stop_locked(void) {
+    if (s_blink_task) {
+        xTaskNotifyGive(s_blink_task);
+        // The worker uses only the strip I/O mutex, never s_blink_mutex.
+        // Join before touching its configuration or publishing another task.
+        xSemaphoreTake(s_blink_stopped, portMAX_DELAY);
+        s_blink_task = NULL;
     }
 
     esp_err_t err = blink_apply_off();
@@ -485,7 +492,17 @@ esp_err_t status_led_blink_stop(void) {
     return err;
 }
 
-esp_err_t status_led_set_state(esp_log_level_t state) {
+esp_err_t status_led_blink_stop(void) {
+    esp_err_t err = status_led_blink_lock();
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = status_led_blink_stop_locked();
+    xSemaphoreGive(s_blink_mutex);
+    return err;
+}
+
+static esp_err_t status_led_set_state_locked(esp_log_level_t state) {
     if (s_log_error_latched && state != ESP_LOG_ERROR) {
         return ESP_OK;
     }
@@ -496,25 +513,35 @@ esp_err_t status_led_set_state(esp_log_level_t state) {
         // for red. The code below extracts the red, green, and blue components
         // from the hex value using bitwise operations.
         case ESP_LOG_INFO:
-            return status_led_blink_start(1000, 1000,
-                                          CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
-                                          CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
-                                          CONFIG_VE_LED_COLOR_INFO & 0xFF);
+            return status_led_blink_start_locked(
+                1000, 1000, CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
+                CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
+                CONFIG_VE_LED_COLOR_INFO & 0xFF);
         case ESP_LOG_WARN:
-            return status_led_blink_start(
+            return status_led_blink_start_locked(
                 600, 600, CONFIG_VE_LED_COLOR_WARNING >> 16 & 0xFF,
                 CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_WARNING & 0xFF);
         case ESP_LOG_ERROR:
-            return status_led_blink_start(
+            return status_led_blink_start_locked(
                 CONFIG_VE_LOG_ERROR_PULSE_MS, CONFIG_VE_LOG_ERROR_PULSE_MS,
                 CONFIG_VE_LED_COLOR_ERROR >> 16 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR & 0xFF);
         case ESP_LOG_NONE:
         default:
-            return status_led_blink_stop();
+            return status_led_blink_stop_locked();
     }
+}
+
+esp_err_t status_led_set_state(esp_log_level_t state) {
+    esp_err_t err = status_led_blink_lock();
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = status_led_set_state_locked(state);
+    xSemaphoreGive(s_blink_mutex);
+    return err;
 }
 
 #else  // led is disabled, so provide empty implementations of the functions
