@@ -20,7 +20,7 @@ For setup and API usage, see the [I2C Interface](./i2c-interface.md) page.
 
 Depending on the mode, the status LED gives information about the status of the device differently.
 
-Supported LEDs: Generic 1-Pin, Generic RGB, WS2812B
+Supported LEDs: WS2812B
 
 For more information about the available settings, see the menuconfig and the [config page](./config.md).
 
