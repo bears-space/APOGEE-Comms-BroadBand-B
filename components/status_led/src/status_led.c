@@ -331,6 +331,14 @@ esp_err_t init_led() {
             .invert_out = INVERT_WS2812B_SIGNAL,
         }};
 
+    esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "led_strip_new_rmt_device failed: %s",
+                 esp_err_to_name(err));
+        s_strip = NULL;
+        return err;
+    }
+
     err = ws2812b_status_led_off();
     if (err != ESP_OK) {
         return err;
