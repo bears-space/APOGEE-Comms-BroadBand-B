@@ -34,6 +34,8 @@
 static const char* TAG = "status_led";
 
 #define LOG_FEEDBACK_QUEUE_LEN 32
+#define LOG_FEEDBACK_EVENT_PENDING (1UL << 0)
+#define LOG_FEEDBACK_ERROR_PENDING (1UL << 1)
 
 typedef enum {
     BLINK_OUTPUT_NONE = 0,
@@ -186,7 +188,8 @@ static esp_log_level_t status_led_log_event_from_format(const char* fmt) {
 }
 
 static void status_led_queue_log_event(esp_log_level_t event) {
-    if (event == ESP_LOG_NONE || !s_log_feedback_queue) {
+    if (event == ESP_LOG_NONE || !s_log_feedback_queue ||
+        !s_log_feedback_task) {
         return;
     }
 
@@ -195,10 +198,15 @@ static void status_led_queue_log_event(esp_log_level_t event) {
     }
 
     if (event == ESP_LOG_ERROR) {
-        s_log_error_latched = true;
+        // Notification bits coalesce repeated errors and cannot be dropped
+        // when the info/warning queue is full. The consumer owns the latch.
+        xTaskNotify(s_log_feedback_task, LOG_FEEDBACK_ERROR_PENDING, eSetBits);
+        return;
     }
 
-    (void)xQueueSend(s_log_feedback_queue, &event, 0);
+    if (xQueueSend(s_log_feedback_queue, &event, 0) == pdTRUE) {
+        xTaskNotify(s_log_feedback_task, LOG_FEEDBACK_EVENT_PENDING, eSetBits);
+    }
 }
 
 static int status_led_log_vprintf(const char* fmt, va_list ap) {
@@ -259,27 +267,38 @@ static void status_led_log_feedback_task(void* arg) {
 
     esp_log_level_t event;
     while (true) {
-        if (xQueueReceive(s_log_feedback_queue, &event, portMAX_DELAY) !=
-            pdTRUE) {
-            continue;
-        }
+        uint32_t notifications = 0;
+        xTaskNotifyWait(0, UINT32_MAX, &notifications, portMAX_DELAY);
 
-        if (event == ESP_LOG_ERROR || s_log_error_latched) {
-            s_log_error_latched = true;
-            status_led_start_log_error_blink();
-            continue;
-        }
+        while (true) {
+            if (notifications & LOG_FEEDBACK_ERROR_PENDING) {
+                s_log_error_latched = true;
+            }
+            if (s_log_error_latched) {
+                status_led_start_log_error_blink();
+                break;
+            }
 
-        if (event == ESP_LOG_WARN) {
-            status_led_pulse(CONFIG_VE_LED_COLOR_WARNING >> 16 & 0xFF,
-                             CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
-                             CONFIG_VE_LED_COLOR_WARNING & 0xFF,
-                             CONFIG_VE_LOG_WARN_PULSE_MS);
-        } else if (event == ESP_LOG_INFO) {
-            status_led_pulse(CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
-                             CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
-                             CONFIG_VE_LED_COLOR_INFO & 0xFF,
-                             CONFIG_VE_LOG_INFO_PULSE_MS);
+            if (xQueueReceive(s_log_feedback_queue, &event, 0) != pdTRUE) {
+                break;
+            }
+
+            if (event == ESP_LOG_WARN) {
+                status_led_pulse(CONFIG_VE_LED_COLOR_WARNING >> 16 & 0xFF,
+                                 CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
+                                 CONFIG_VE_LED_COLOR_WARNING & 0xFF,
+                                 CONFIG_VE_LOG_WARN_PULSE_MS);
+            } else if (event == ESP_LOG_INFO) {
+                status_led_pulse(CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
+                                 CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
+                                 CONFIG_VE_LED_COLOR_INFO & 0xFF,
+                                 CONFIG_VE_LOG_INFO_PULSE_MS);
+            }
+
+            // Check the dedicated error bit between pulses, even while the
+            // normal event queue remains busy.
+            notifications = 0;
+            xTaskNotifyWait(0, UINT32_MAX, &notifications, 0);
         }
     }
 }
