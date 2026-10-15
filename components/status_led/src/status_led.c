@@ -501,6 +501,7 @@ esp_err_t status_led_set_state(esp_log_level_t state) {
 esp_err_t init_led() { return ESP_OK; }
 esp_err_t status_led_enable_log_feedback(void) { return ESP_OK; }
 esp_err_t status_led_set_state(esp_log_level_t state) { return ESP_OK; }
+esp_err_t status_led_blink_stop(void) { return ESP_OK; }
 
 #endif
 
