@@ -8,7 +8,7 @@ menu "Vigilant Engine Configuration: LEDs"
 
     config VE_INVERT_WS2812B_SIGNAL
         bool "Invert Status LED"
-        default y
+        default n
         help
             Enable this option to invert the signal (active low) for the WS2812B status LED. This may be necessary depending on the specific hardware configuration and wiring of the LED.
 
