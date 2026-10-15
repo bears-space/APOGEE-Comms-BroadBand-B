@@ -72,7 +72,7 @@ RGB color in hex format used to show INFO logs.
 
 ___
 
-#### `VE_LED_COLOR_WARN`, **hex**
+#### `VE_LED_COLOR_WARNING`, **hex**
 RGB color in hex format used to show WARN logs.
 
 **default**: `0xFFFF00`
