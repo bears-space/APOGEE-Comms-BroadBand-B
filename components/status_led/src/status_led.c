@@ -327,12 +327,11 @@ esp_err_t init_led() {
         .strip_gpio_num = CONFIG_VE_STATUS_WS2812B_PIN,
         .max_leds = 1,
         .led_model = LED_MODEL_WS2812,
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB.flags =
-            {
-                .invert_out = INVERT_WS2812B_SIGNAL,
-            }
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB.flags = {
+            .invert_out = INVERT_WS2812B_SIGNAL,
+        }};
 
-        err = ws2812b_status_led_off();
+    err = ws2812b_status_led_off();
     if (err != ESP_OK) {
         return err;
     }
