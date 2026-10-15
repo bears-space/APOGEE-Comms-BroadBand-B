@@ -4,17 +4,11 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "esp_log_level.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef enum {
-    STATUS_STATE_INFO,
-    STATUS_STATE_WARNING,
-    STATUS_STATE_ERROR,
-    STATUS_STATE_OFF
-} status_state_t;
 
 // esp_err_t status_led_init(const status_led_config_t *cfg);
 // esp_err_t status_led_set_rgb(uint8_t r, uint8_t g, uint8_t b);
@@ -23,7 +17,8 @@ typedef enum {
 esp_err_t init_led();
 esp_err_t status_led_enable_log_feedback(void);
 
-esp_err_t status_led_set_state(status_state_t state);
+// Use ESP_LOG_NONE to turn the LED off.
+esp_err_t status_led_set_state(esp_log_level_t state);
 
 esp_err_t static status_led_blink_start(uint32_t on_ms, uint32_t off_ms,
                                         uint8_t red, uint8_t green,

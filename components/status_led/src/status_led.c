@@ -6,7 +6,6 @@
 
 #include "driver/gpio.h"
 #include "esp_log.h"
-#include "esp_log_level.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -210,11 +209,19 @@ static void status_led_start_log_error_blink(void);
 
 static void status_led_pulse(uint8_t red, uint8_t green, uint8_t blue,
                              uint32_t duration_ms) {
-    if (status_led_blink_stop() != ESP_OK) {
+    esp_err_t err = status_led_blink_stop();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop status LED blink: %s",
+                 esp_err_to_name(err));
         return;
     }
 
-    (void)status_led_set_rgb_once(red, green, blue);
+    err = status_led_set_rgb_once(red, green, blue);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set status LED color: %s",
+                 esp_err_to_name(err));
+        return;
+    }
     vTaskDelay(pdMS_TO_TICKS(duration_ms));
 
     if (s_log_error_latched) {
@@ -222,7 +229,10 @@ static void status_led_pulse(uint8_t red, uint8_t green, uint8_t blue,
         return;
     }
 
-    (void)status_led_off_once();
+    err = status_led_off_once();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to clear status LED: %s", esp_err_to_name(err));
+    }
 }
 
 static void status_led_start_log_error_blink(void) {
@@ -231,7 +241,11 @@ static void status_led_start_log_error_blink(void) {
     }
 
     s_log_error_blink_started = true;
-    (void)status_led_set_state(STATUS_STATE_ERROR);
+    esp_err_t err = status_led_set_state(ESP_LOG_ERROR);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start status LED error blink: %s",
+                 esp_err_to_name(err));
+    }
 }
 
 static void status_led_log_feedback_task(void* arg) {
@@ -292,7 +306,8 @@ esp_err_t init_led() {
     if (mutex_err != ESP_OK) {
         return mutex_err;
     }
-    ESP_LOGI(TAG, "Initializing WS2812B status LED");
+    ESP_LOGI(TAG, "Initializing WS2812B status LED on GPIO %d",
+             CONFIG_VE_STATUS_WS2812B_PIN);
     if (s_strip)
         return status_led_enable_log_feedback();  // already initialized
 
@@ -317,13 +332,18 @@ esp_err_t init_led() {
         return err;
     }
 
-    esp_err_t off_err = ws2812b_status_led_off();
-    if (off_err == ESP_OK) {
-        ESP_LOGI(TAG, "Done initializing status LED");
-        return status_led_enable_log_feedback();
+    err = ws2812b_status_led_off();
+    if (err != ESP_OK) {
+        return err;
     }
-    return off_err;
+
+    err = status_led_enable_log_feedback();
+    if (err != ESP_OK) {
+        return err;
+    }
+
     ESP_LOGI(TAG, "Done initializing status LED");
+    return ESP_OK;
 }
 
 static esp_err_t blink_apply_state(void) {
@@ -439,8 +459,8 @@ esp_err_t status_led_blink_stop(void) {
     return err;
 }
 
-esp_err_t status_led_set_state(status_state_t state) {
-    if (s_log_error_latched && state != STATUS_STATE_ERROR) {
+esp_err_t status_led_set_state(esp_log_level_t state) {
+    if (s_log_error_latched && state != ESP_LOG_ERROR) {
         return ESP_OK;
     }
 
@@ -449,22 +469,23 @@ esp_err_t status_led_set_state(status_state_t state) {
         // defined in the Kconfig.projbuild file as hex values, e.g. 0xFF0000
         // for red. The code below extracts the red, green, and blue components
         // from the hex value using bitwise operations.
-        case STATUS_STATE_INFO:
+        case ESP_LOG_INFO:
             return status_led_blink_start(1000, 1000,
                                           CONFIG_VE_LED_COLOR_INFO >> 16 & 0xFF,
                                           CONFIG_VE_LED_COLOR_INFO >> 8 & 0xFF,
                                           CONFIG_VE_LED_COLOR_INFO & 0xFF);
-        case STATUS_STATE_WARNING:
+        case ESP_LOG_WARN:
             return status_led_blink_start(
                 600, 600, CONFIG_VE_LED_COLOR_WARNING >> 16 & 0xFF,
                 CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_WARNING & 0xFF);
-        case STATUS_STATE_ERROR:
+        case ESP_LOG_ERROR:
             return status_led_blink_start(
                 CONFIG_VE_LOG_ERROR_PULSE_MS, CONFIG_VE_LOG_ERROR_PULSE_MS,
                 CONFIG_VE_LED_COLOR_ERROR >> 16 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR & 0xFF);
+        case ESP_LOG_NONE:
         default:
             return status_led_blink_stop();
     }
@@ -473,7 +494,7 @@ esp_err_t status_led_set_state(status_state_t state) {
 #else  // led is disabled, so provide empty implementations of the functions
 esp_err_t init_led() { return ESP_OK; }
 esp_err_t status_led_enable_log_feedback(void) { return ESP_OK; }
-esp_err_t status_led_set_state(status_state_t state) { return ESP_OK; }
+esp_err_t status_led_set_state(esp_log_level_t state) { return ESP_OK; }
 
 #endif
 
