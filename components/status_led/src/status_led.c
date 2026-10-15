@@ -382,6 +382,10 @@ esp_err_t init_led() {
     led_strip_rmt_config_t rmt_cfg = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10 * 1000 * 1000,
+        .mem_block_symbols = 64,
+        .flags = {
+            .with_dma = false,
+        },
     };
 
     esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
