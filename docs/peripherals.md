@@ -21,7 +21,7 @@ For setup and API usage, see the [I2C Interface](./i2c-interface.md) page.
 Supported LEDs: WS2812B
 
 
-ESP-IDF info logs trigger a very short green pulse. Warnings trigger a short yellow pulse. The first ESP-IDF error log latches the LED into a red blink and later info or warning logs are ignored.
+ESP-IDF info logs trigger a very short green pulse. Warnings trigger a short yellow pulse. The first ESP-IDF error log latches the LED into a red blink using the configured `VE_LOG_ERROR_PULSE_MS` duration, and later info or warning logs are ignored.
 
 The colours of the log levels are configurable in the kconfig settings.
 
