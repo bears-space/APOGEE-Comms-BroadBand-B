@@ -37,6 +37,7 @@ static const char* TAG = "status_led";
 #define LOG_FEEDBACK_QUEUE_LEN 32
 #define LOG_FEEDBACK_EVENT_PENDING (1UL << 0)
 #define LOG_FEEDBACK_ERROR_PENDING (1UL << 1)
+#define LOG_ERROR_RETRY_MS 250
 
 typedef enum {
     BLINK_OUTPUT_NONE = 0,
@@ -281,9 +282,10 @@ static void status_led_start_log_error_blink(void) {
         return;
     }
 
-    s_log_error_blink_started = true;
     esp_err_t err = status_led_set_state(ESP_LOG_ERROR);
-    if (err != ESP_OK) {
+    if (err == ESP_OK) {
+        s_log_error_blink_started = true;
+    } else {
         ESP_LOGE(TAG, "Failed to start status LED error blink: %s",
                  esp_err_to_name(err));
     }
@@ -293,9 +295,18 @@ static void status_led_log_feedback_task(void* arg) {
     (void)arg;
 
     esp_log_level_t event;
+    TickType_t retry_ticks = pdMS_TO_TICKS(LOG_ERROR_RETRY_MS);
+    if (retry_ticks == 0) {
+        retry_ticks = 1;
+    }
     while (true) {
         uint32_t notifications = 0;
-        xTaskNotifyWait(0, UINT32_MAX, &notifications, portMAX_DELAY);
+        // A failed start must retry independently of log events, which the
+        // error latch suppresses. Resume indefinite waits only after success.
+        TickType_t wait_ticks =
+            s_log_error_latched && !s_log_error_blink_started ? retry_ticks
+                                                              : portMAX_DELAY;
+        xTaskNotifyWait(0, UINT32_MAX, &notifications, wait_ticks);
 
         while (true) {
             if (notifications & LOG_FEEDBACK_ERROR_PENDING) {
@@ -383,9 +394,10 @@ esp_err_t init_led() {
         .clk_src = RMT_CLK_SRC_DEFAULT,
         .resolution_hz = 10 * 1000 * 1000,
         .mem_block_symbols = 64,
-        .flags = {
-            .with_dma = false,
-        },
+        .flags =
+            {
+                .with_dma = false,
+            },
     };
 
     esp_err_t err = led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_strip);
