@@ -15,28 +15,34 @@ menu "Vigilant Engine Configuration: LEDs"
     config VE_STATUS_WS2812B_PIN
         int "WS2812B Data Pin"
         depends on VE_ENABLE_STATUS_LED
-        default 1
+        default 8
 
     config VE_LOG_INFO_PULSE_MS
         int "Log Info Pulse Duration (ms)"
+        range 1 60000
         default 35
         depends on VE_ENABLE_STATUS_LED
         help
             Set the duration of the pulse for log info events in milliseconds.
+            Allowed range: 1..60000.
 
     config VE_LOG_WARN_PULSE_MS
         int "Log Warning Pulse Duration (ms)"
+        range 1 60000
         default 80
         depends on VE_ENABLE_STATUS_LED
         help
             Set the duration of the pulse for log warning events in milliseconds.
+            Allowed range: 1..60000.
 
     config VE_LOG_ERROR_PULSE_MS
         int "Log Error Pulse Duration (ms)"
+        range 1 60000
         default 200
         depends on VE_ENABLE_STATUS_LED
         help
             Set the duration of the pulse for log error events in milliseconds.
+            Allowed range: 1..60000.
 
     config VE_LED_COLOR_INFO
         hex "LED color INFO (hex)"

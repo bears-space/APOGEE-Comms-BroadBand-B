@@ -38,6 +38,8 @@ static const char* TAG = "status_led";
 #define LOG_FEEDBACK_EVENT_PENDING (1UL << 0)
 #define LOG_FEEDBACK_ERROR_PENDING (1UL << 1)
 #define LOG_ERROR_RETRY_MS 250
+#define LOG_PULSE_DURATION_MIN_MS 1U
+#define LOG_PULSE_DURATION_MAX_MS 60000U
 
 typedef enum {
     BLINK_OUTPUT_NONE = 0,
@@ -256,6 +258,12 @@ static int status_led_log_vprintf(const char* fmt, va_list ap) {
 
 static void status_led_pulse(uint8_t red, uint8_t green, uint8_t blue,
                              uint32_t duration_ms) {
+    if (duration_ms < LOG_PULSE_DURATION_MIN_MS) {
+        duration_ms = LOG_PULSE_DURATION_MIN_MS;
+    } else if (duration_ms > LOG_PULSE_DURATION_MAX_MS) {
+        duration_ms = LOG_PULSE_DURATION_MAX_MS;
+    }
+
     esp_err_t err = status_led_blink_lock();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to lock status LED: %s", esp_err_to_name(err));
@@ -342,7 +350,13 @@ static void status_led_log_feedback_task(void* arg) {
 }
 
 esp_err_t status_led_enable_log_feedback(void) {
+    esp_err_t err = status_led_blink_lock();
+    if (err != ESP_OK) {
+        return err;
+    }
+
     if (s_log_hook_installed) {
+        xSemaphoreGive(s_blink_mutex);
         return ESP_OK;
     }
 
@@ -350,6 +364,7 @@ esp_err_t status_led_enable_log_feedback(void) {
         s_log_feedback_queue =
             xQueueCreate(LOG_FEEDBACK_QUEUE_LEN, sizeof(esp_log_level_t));
         if (!s_log_feedback_queue) {
+            xSemaphoreGive(s_blink_mutex);
             return ESP_ERR_NO_MEM;
         }
     }
@@ -361,12 +376,14 @@ esp_err_t status_led_enable_log_feedback(void) {
         if (ok != pdPASS) {
             vQueueDelete(s_log_feedback_queue);
             s_log_feedback_queue = NULL;
+            xSemaphoreGive(s_blink_mutex);
             return ESP_ERR_NO_MEM;
         }
     }
 
     s_orig_vprintf = esp_log_set_vprintf(status_led_log_vprintf);
     s_log_hook_installed = true;
+    xSemaphoreGive(s_blink_mutex);
     return ESP_OK;
 }
 
@@ -546,8 +563,14 @@ static esp_err_t status_led_set_state_locked(esp_log_level_t state) {
                 CONFIG_VE_LED_COLOR_WARNING >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_WARNING & 0xFF);
         case ESP_LOG_ERROR:
+            uint32_t error_pulse_ms = CONFIG_VE_LOG_ERROR_PULSE_MS;
+            if (error_pulse_ms < LOG_PULSE_DURATION_MIN_MS) {
+                error_pulse_ms = LOG_PULSE_DURATION_MIN_MS;
+            } else if (error_pulse_ms > LOG_PULSE_DURATION_MAX_MS) {
+                error_pulse_ms = LOG_PULSE_DURATION_MAX_MS;
+            }
             return status_led_blink_start_locked(
-                CONFIG_VE_LOG_ERROR_PULSE_MS, CONFIG_VE_LOG_ERROR_PULSE_MS,
+                error_pulse_ms, error_pulse_ms,
                 CONFIG_VE_LED_COLOR_ERROR >> 16 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR >> 8 & 0xFF,
                 CONFIG_VE_LED_COLOR_ERROR & 0xFF);

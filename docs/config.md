@@ -32,9 +32,9 @@ Enable status LED, enable this option to use the status LED functionality in Vig
 ___
 
 #### `VE_STATUS_WS2812B_PIN`, **int**
-The GPIO pin used as the data output for the WS2812B status LED. This setting applies when `VE_LED_TYPE` is set to `VE_LED_TYPE_WS2812B`.
+The GPIO pin used as the data output for the WS2812B status LED.
 
-**default**: `1`
+**default**: `8`
 
 ---
 
@@ -48,6 +48,7 @@ ___
 Set the duration of the pulse for log INFO events in milliseconds.
 
 **default**: `35`
+**range**: `1..60000`
 
 ___
 
@@ -55,6 +56,7 @@ ___
 Set the duration of the pulse for log WARN events in milliseconds.
 
 **default**: `80`
+**range**: `1..60000`
 
 ___
 
@@ -62,6 +64,7 @@ ___
 Set the duration of the pulse for log ERROR events in milliseconds.
 
 **default**: `200`
+**range**: `1..60000`
 
 ___
 
